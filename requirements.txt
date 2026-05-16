@@ -1,5 +1,6 @@
-gravityai
-numpy
-pandas
-scikit-learn
+PyQt6
 
+# dev / code quality
+black
+flake8
+pytest
