@@ -1,46 +1,67 @@
 from datetime import date
 
 import markdown as md
+from PyQt6.QtGui import QFont, QPalette
 from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QApplication,
+    QCheckBox,
+    QFileDialog,
+    QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QTextBrowser,
     QTextEdit,
-    QHBoxLayout,
-    QPushButton,
-    QFileDialog,
-    QMessageBox,
-    QCheckBox,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtGui import QFont
 
-_CSS = """
-<style>
-body {
+
+def _build_css() -> str:
+    """Generate CSS that matches the current app palette (light or dark)."""
+    palette = QApplication.instance().palette()
+    bg = palette.color(QPalette.ColorRole.Base)
+    dark_mode = bg.lightness() < 128
+
+    if dark_mode:
+        text       = "#e8e8e8"
+        muted      = "#b0b0b0"
+        h1_border  = "#555"
+        hr_color   = "#444"
+        bq_border  = "#666"
+        code_bg    = "#2c2c2c"
+    else:
+        text       = "#1a1a1a"
+        muted      = "#555"
+        h1_border  = "#ddd"
+        hr_color   = "#e0e0e0"
+        bq_border  = "#aaa"
+        code_bg    = "#f4f4f4"
+
+    return f"""<style>
+body {{
     font-family: 'Segoe UI', Arial, sans-serif;
     font-size: 13px;
     line-height: 1.7;
-    color: #1a1a1a;
+    color: {text};
     padding: 4px 8px;
-}
-h1 { font-size: 18px; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 12px; }
-h2 { font-size: 15px; margin-top: 24px; margin-bottom: 6px; }
-h3 { font-size: 13px; margin-top: 16px; margin-bottom: 4px; }
-blockquote {
-    border-left: 3px solid #aaa;
+}}
+h1 {{ font-size: 18px; border-bottom: 1px solid {h1_border}; padding-bottom: 6px; margin-bottom: 12px; }}
+h2 {{ font-size: 15px; margin-top: 24px; margin-bottom: 6px; }}
+h3 {{ font-size: 13px; margin-top: 16px; margin-bottom: 4px; }}
+blockquote {{
+    border-left: 3px solid {bq_border};
     margin: 6px 0 6px 12px;
     padding: 2px 10px;
-    color: #555;
+    color: {muted};
     font-style: italic;
-}
-ul { padding-left: 20px; }
-li { margin-bottom: 4px; }
-hr { border: none; border-top: 1px solid #e0e0e0; margin: 20px 0; }
-strong { font-weight: 600; }
-code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; font-family: Consolas, monospace; }
-</style>
-"""
+}}
+ul {{ padding-left: 20px; }}
+li {{ margin-bottom: 4px; }}
+hr {{ border: none; border-top: 1px solid {hr_color}; margin: 20px 0; }}
+strong {{ font-weight: 600; }}
+code {{ background: {code_bg}; padding: 1px 4px; border-radius: 3px; font-family: Consolas, monospace; }}
+</style>"""
 
 
 class OutputPanel(QWidget):
@@ -111,7 +132,8 @@ class OutputPanel(QWidget):
             self._raw_content,
             extensions=["extra", "nl2br"],
         )
-        self._browser.setHtml(f"<html><head>{_CSS}</head><body>{html_body}</body></html>")
+        css = _build_css()
+        self._browser.setHtml(f"<html><head>{css}</head><body>{html_body}</body></html>")
 
     def _on_toggle_raw(self, checked: bool) -> None:
         if checked:
