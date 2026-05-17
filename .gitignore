@@ -31,4 +31,6 @@ build/
 # App data (generated at runtime)
 uploads/*
 !uploads/.gitkeep
+notes/*
+!notes/.gitkeep
 history.json

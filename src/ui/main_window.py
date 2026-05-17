@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.input_panel.process_btn.clicked.connect(self._on_process)
+        self.input_panel.open_note_requested.connect(self.output_panel.open_file)
 
     def _on_process(self) -> None:
         sources = self.input_panel.take_sources()
@@ -76,10 +77,14 @@ class MainWindow(QMainWindow):
         self._worker.error.connect(self._on_error)
         self._worker.start()
 
-    def _on_finished(self, markdown: str) -> None:
-        self.output_panel.set_content(markdown)
+    def _on_finished(self, markdown: str, notes_path: str) -> None:
+        if notes_path:
+            self.output_panel.open_file(notes_path)
+        else:
+            self.output_panel.set_content(markdown)
         self.input_panel.set_processing(False)
         self.input_panel.refresh_history()
+        self.input_panel.refresh_notes_tree()
         self.status_bar.showMessage("Done")
 
     def _on_error(self, message: str) -> None:

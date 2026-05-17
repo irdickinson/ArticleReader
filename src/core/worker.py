@@ -5,12 +5,13 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 from core.extractor import extract, is_youtube_url
 from core.history import HistoryStore
+from core.notes_store import save_processed_notes
 from core.summarizer import summarize
 
 
 class ProcessingWorker(QThread):
     progress = pyqtSignal(str)
-    finished = pyqtSignal(str)
+    finished = pyqtSignal(str, str)  # (markdown, saved_notes_path)
     error = pyqtSignal(str)
 
     def __init__(self, sources: list[str]) -> None:
@@ -35,15 +36,25 @@ class ProcessingWorker(QThread):
                 sections.append(f"## Source {i}: {label}\n\n> Error: {exc}\n")
 
         today = date.today().strftime("%Y-%m-%d")
-        output = f"# Notes — {today}\n\n" + "\n---\n\n".join(sections)
-        self.finished.emit(output)
+        markdown = f"# Notes — {today}\n\n" + "\n---\n\n".join(sections)
+
+        try:
+            notes_path = save_processed_notes(markdown, self._sources)
+            # Back-fill notes_path on the entries we just added
+            store = HistoryStore()
+            for entry in store.entries()[:total]:
+                entry.notes_path = str(notes_path)
+            store._save()
+        except Exception:
+            notes_path = None
+
+        self.finished.emit(markdown, str(notes_path) if notes_path else "")
 
 
 def _source_type(source: str) -> str:
     if source.startswith("http"):
         return "youtube" if is_youtube_url(source) else "url"
-    suffix = Path(source).suffix.lower()
-    return "pdf" if suffix == ".pdf" else "html"
+    return "pdf" if Path(source).suffix.lower() == ".pdf" else "html"
 
 
 def _format_section(index: int, title: str, source: str, notes: str) -> str:

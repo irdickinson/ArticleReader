@@ -14,16 +14,17 @@ class HistoryEntry:
         source_type: str,
         processed_at: str,
         cached_path: str | None = None,
+        notes_path: str | None = None,
     ) -> None:
         self.title = title
         self.source = source
         self.source_type = source_type
         self.processed_at = processed_at
         self.cached_path = cached_path
+        self.notes_path = notes_path
 
     @property
     def requeue_path(self) -> str:
-        """The path/URL to re-add to the queue."""
         return self.cached_path if self.cached_path else self.source
 
     def to_dict(self) -> dict:
@@ -33,6 +34,7 @@ class HistoryEntry:
             "source_type": self.source_type,
             "processed_at": self.processed_at,
             "cached_path": self.cached_path,
+            "notes_path": self.notes_path,
         }
 
     @classmethod
@@ -43,6 +45,7 @@ class HistoryEntry:
             source_type=data["source_type"],
             processed_at=data["processed_at"],
             cached_path=data.get("cached_path"),
+            notes_path=data.get("notes_path"),
         )
 
 
@@ -51,7 +54,13 @@ class HistoryStore:
         ensure_dirs()
         self._entries: list[HistoryEntry] = self._load()
 
-    def add(self, title: str, source: str, source_type: str) -> HistoryEntry:
+    def add(
+        self,
+        title: str,
+        source: str,
+        source_type: str,
+        notes_path: str | None = None,
+    ) -> HistoryEntry:
         cached_path = None
         if source_type in ("pdf", "html") and not source.startswith("http"):
             cached_path = _cache_file(source)
@@ -62,6 +71,7 @@ class HistoryStore:
             source_type=source_type,
             processed_at=datetime.now().isoformat(timespec="seconds"),
             cached_path=cached_path,
+            notes_path=notes_path,
         )
         self._entries.insert(0, entry)
         self._save()
@@ -87,7 +97,6 @@ class HistoryStore:
 
 
 def _cache_file(source_path: str) -> str | None:
-    """Copy a local file into uploads/ with a timestamp prefix."""
     src = Path(source_path)
     if not src.exists():
         return None
