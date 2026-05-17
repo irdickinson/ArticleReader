@@ -12,6 +12,7 @@ A local desktop application for automated note-taking. Give it URLs, HTML files,
 - **Rendered markdown** — notes display as formatted output, not raw text
 - **History** — tracks every source you've processed; re-queue past items in one click
 - **File cache** — uploaded files are preserved locally so they're always re-accessible
+- **Copy to clipboard** — one-click copy of raw markdown for pasting into Obsidian or any editor
 - **Export** — save notes as `.md` files
 
 ## Requirements
@@ -62,6 +63,16 @@ src/
         └── output_panel.py  # rendered notes and save
 uploads/                     # cached copies of uploaded files (gitignored)
 ```
+
+## Building a standalone executable
+
+Produces `dist/ArticleReader/ArticleReader.exe` — no Python installation required on the target machine.
+
+```powershell
+.\build.ps1
+```
+
+To distribute: copy the entire `dist/ArticleReader/` folder to the target machine. Create a shortcut to `ArticleReader.exe` for the desktop. The target machine still needs [Ollama](https://ollama.com) installed with `llama3.1:8b` pulled.
 
 ## Development
 

@@ -14,8 +14,9 @@ dist/
 build/
 *.egg-info/
 
-# PyInstaller build output
-*.spec
+# PyInstaller build output (spec file IS committed; dist/ and build/ are not)
+dist/
+build/
 
 # Environment variables
 .env
