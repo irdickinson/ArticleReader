@@ -76,10 +76,12 @@ To distribute: copy the entire `dist/ArticleReader/` folder to the target machin
 
 ## Development
 
+For contributors who want to modify the source code. Not needed to run or use the app.
+
 ```bash
-black src/
-flake8 src/
-pytest
+black src/     # auto-format code
+flake8 src/    # check for lint errors
+pytest         # run tests
 ```
 
 ## License

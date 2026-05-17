@@ -1,5 +1,6 @@
-from PyQt6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QSplitter, QStatusBar
+from PyQt6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QSplitter, QStatusBar, QMessageBox
 from PyQt6.QtCore import Qt
+import ollama
 
 from .panels.input_panel import InputPanel
 from .panels.output_panel import OutputPanel
@@ -49,6 +50,22 @@ class MainWindow(QMainWindow):
         if not sources:
             return
 
+        if not _ollama_running():
+            QMessageBox.warning(
+                self,
+                "Ollama Not Running",
+                "Ollama is not running.\n\n"
+                "Please start Ollama and try again.\n\n"
+                "If Ollama is installed, open it from the Start menu "
+                "or run 'ollama serve' in a terminal.",
+            )
+            self.input_panel.set_processing(False)
+            # Put sources back so the user doesn't lose their queue
+            for s in sources:
+                self.input_panel._queued_sources.append(s)
+            self.input_panel._refresh_queue_label()
+            return
+
         self.input_panel.set_processing(True)
         self.output_panel.clear()
         self.status_bar.showMessage("Starting…")
@@ -68,3 +85,11 @@ class MainWindow(QMainWindow):
     def _on_error(self, message: str) -> None:
         self.input_panel.set_processing(False)
         self.status_bar.showMessage(f"Error: {message}")
+
+
+def _ollama_running() -> bool:
+    try:
+        ollama.list()
+        return True
+    except Exception:
+        return False
