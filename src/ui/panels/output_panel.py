@@ -2,6 +2,7 @@ from datetime import date
 
 import markdown as md
 from PyQt6.QtGui import QFont, QPalette
+from PyQt6.QtGui import QFont, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -12,6 +13,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QTextBrowser,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -85,12 +87,18 @@ class OutputPanel(QWidget):
         self._raw_toggle = QCheckBox("Raw")
         self._raw_toggle.setToolTip("Toggle between rendered markdown and plain text")
 
+        self._copy_btn = QToolButton()
+        self._copy_btn.setText("Copy")
+        self._copy_btn.setToolTip("Copy raw markdown to clipboard")
+        self._copy_btn.setEnabled(False)
+
         self.save_btn = QPushButton("Save as Markdown")
         self.save_btn.setEnabled(False)
 
         header_row.addWidget(header)
         header_row.addStretch()
         header_row.addWidget(self._raw_toggle)
+        header_row.addWidget(self._copy_btn)
         header_row.addWidget(self.save_btn)
         layout.addLayout(header_row)
 
@@ -113,19 +121,23 @@ class OutputPanel(QWidget):
 
     def _connect_signals(self) -> None:
         self.save_btn.clicked.connect(self._on_save)
+        self._copy_btn.clicked.connect(self._on_copy)
         self._raw_toggle.toggled.connect(self._on_toggle_raw)
 
     def set_content(self, markdown: str) -> None:
         self._raw_content = markdown
         self._render()
         self._raw_view.setPlainText(markdown)
-        self.save_btn.setEnabled(bool(markdown.strip()))
+        has_content = bool(markdown.strip())
+        self.save_btn.setEnabled(has_content)
+        self._copy_btn.setEnabled(has_content)
 
     def clear(self) -> None:
         self._raw_content = ""
         self._browser.clear()
         self._raw_view.clear()
         self.save_btn.setEnabled(False)
+        self._copy_btn.setEnabled(False)
 
     def _render(self) -> None:
         html_body = md.markdown(
@@ -134,6 +146,12 @@ class OutputPanel(QWidget):
         )
         css = _build_css()
         self._browser.setHtml(f"<html><head>{css}</head><body>{html_body}</body></html>")
+
+    def _on_copy(self) -> None:
+        QApplication.clipboard().setText(self._raw_content)
+        self._copy_btn.setText("Copied!")
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(1500, lambda: self._copy_btn.setText("Copy"))
 
     def _on_toggle_raw(self, checked: bool) -> None:
         if checked:

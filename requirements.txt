@@ -8,6 +8,9 @@ ollama
 youtube-transcript-api
 markdown
 
+# packaging
+pyinstaller
+
 # dev / code quality
 black
 flake8
