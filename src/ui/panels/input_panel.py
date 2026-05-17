@@ -11,9 +11,11 @@ from PyQt6.QtCore import QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QDropEvent
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -35,7 +37,7 @@ _TYPE_LABELS = {"youtube": "YT", "url": "URL", "pdf": "PDF", "html": "HTML"}
 
 
 class NotesTreeWidget(QTreeWidget):
-    """QTreeWidget with filesystem-backed drag-and-drop and right-click delete."""
+    """QTreeWidget with filesystem-backed drag-and-drop, rename, and delete."""
 
     def __init__(self, panel: "InputPanel") -> None:
         super().__init__()
@@ -154,7 +156,7 @@ class InputPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMinimumWidth(240)
-        self.setMaximumWidth(380)
+        self.setMaximumWidth(400)
         self._queued_sources: list[str] = []
         self._build_ui()
         self._connect_signals()
@@ -172,6 +174,16 @@ class InputPanel(QWidget):
     @property
     def detail_level(self) -> str:
         return self.detail_combo.currentText().lower()
+
+    @property
+    def sections(self) -> dict[str, bool]:
+        return {
+            "summary":       self._chk_summary.isChecked(),
+            "key_points":    self._chk_key_points.isChecked(),
+            "key_takeaways": self._chk_takeaways.isChecked(),
+            "key_terms":     self._chk_key_terms.isChecked(),
+            "questions":     self._chk_questions.isChecked(),
+        }
 
     def set_processing(self, active: bool) -> None:
         self.url_input.setEnabled(not active)
@@ -210,6 +222,7 @@ class InputPanel(QWidget):
         layout.setContentsMargins(16, 20, 16, 20)
         layout.setSpacing(10)
 
+        # URL input
         url_label = QLabel("URL")
         url_label.setStyleSheet("font-weight: bold;")
         self.url_input = QLineEdit()
@@ -222,6 +235,7 @@ class InputPanel(QWidget):
         layout.addWidget(self.add_url_btn)
         layout.addWidget(_divider())
 
+        # File upload
         file_label = QLabel("File")
         file_label.setStyleSheet("font-weight: bold;")
         self.upload_btn = QPushButton("Upload File (HTML / PDF)")
@@ -230,14 +244,20 @@ class InputPanel(QWidget):
         layout.addWidget(self.upload_btn)
         layout.addWidget(_divider())
 
+        # Queue status
         self.queue_label = QLabel("No sources queued")
         self.queue_label.setStyleSheet("color: grey; font-size: 11px;")
         self.queue_label.setWordWrap(True)
         layout.addWidget(self.queue_label)
         layout.addWidget(_divider())
 
-        detail_label = QLabel("Detail Level")
-        detail_label.setStyleSheet("font-weight: bold;")
+        # Summary settings
+        settings_label = QLabel("Summary Settings")
+        settings_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(settings_label)
+
+        detail_row = QHBoxLayout()
+        detail_row.addWidget(QLabel("Detail:"))
         self.detail_combo = QComboBox()
         self.detail_combo.addItems(["Brief", "Standard", "Detailed"])
         self.detail_combo.setCurrentIndex(1)
@@ -246,9 +266,34 @@ class InputPanel(QWidget):
             "Standard: 5–7 key points\n"
             "Detailed: 8–12 key points"
         )
+        detail_row.addWidget(self.detail_combo)
+        layout.addLayout(detail_row)
 
-        layout.addWidget(detail_label)
-        layout.addWidget(self.detail_combo)
+        sections_label = QLabel("Include sections:")
+        sections_label.setStyleSheet("font-size: 11px; color: grey;")
+        layout.addWidget(sections_label)
+
+        self._chk_summary    = QCheckBox("Summary")
+        self._chk_key_points = QCheckBox("Key Points")
+        self._chk_takeaways  = QCheckBox("Key Takeaways")
+        self._chk_key_terms  = QCheckBox("Key Terms")
+        self._chk_questions  = QCheckBox("Questions to Explore")
+
+        self._chk_summary.setChecked(True)
+        self._chk_key_points.setChecked(True)
+        self._chk_takeaways.setChecked(False)
+        self._chk_key_terms.setChecked(True)
+        self._chk_questions.setChecked(False)
+
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        grid.addWidget(self._chk_summary,    0, 0)
+        grid.addWidget(self._chk_key_points, 0, 1)
+        grid.addWidget(self._chk_takeaways,  1, 0)
+        grid.addWidget(self._chk_key_terms,  1, 1)
+        grid.addWidget(self._chk_questions,  2, 0, 1, 2)
+        layout.addLayout(grid)
+
         layout.addWidget(_divider())
 
         self.process_btn = QPushButton("Process")

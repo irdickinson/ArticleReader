@@ -17,38 +17,81 @@ _DETAIL_CONFIGS: dict[str, dict[str, str]] = {
     },
 }
 
-_PROMPT = """\
-You are a precise note-taking assistant. Read the following text and produce structured markdown notes.
-
-Use exactly this format and nothing else:
-
-### Summary
-One concise paragraph covering the main idea.
-
-### Key Points
-Cover {points} key points. {depth_note}
-- **Point**: brief explanation
-  > "Short direct quote from the source that supports this point."
-
-### Key Terms
-- **Term**: brief definition
-
-Rules:
-- Every key point must include a supporting blockquote pulled verbatim from the source text.
-- Only include Key Terms if the text contains domain-specific vocabulary worth defining. \
-If there are no such terms, omit that section entirely.
-- Do not add any text outside of these sections.
-
-Text:
-{text}
-"""
+_DEFAULT_SECTIONS: dict[str, bool] = {
+    "summary": True,
+    "key_points": True,
+    "key_takeaways": False,
+    "key_terms": True,
+    "questions": False,
+}
 
 
-def summarize(text: str, detail_level: str = "standard") -> str:
+def summarize(
+    text: str,
+    detail_level: str = "standard",
+    sections: dict[str, bool] | None = None,
+) -> str:
+    active = {**_DEFAULT_SECTIONS, **(sections or {})}
     config = _DETAIL_CONFIGS.get(detail_level, _DETAIL_CONFIGS["standard"])
-    prompt = _PROMPT.format(text=text, **config)
+    prompt = _build_prompt(text, config, active)
     response = ollama.chat(
         model=MODEL,
         messages=[{"role": "user", "content": prompt}],
     )
     return response["message"]["content"].strip()
+
+
+def _build_prompt(
+    text: str, config: dict[str, str], sections: dict[str, bool]
+) -> str:
+    parts: list[str] = [
+        "You are a precise note-taking assistant. Read the following text and produce "
+        "structured markdown notes.\n\n"
+        "Include only the sections listed below, in exactly this format:\n",
+    ]
+
+    if sections.get("summary"):
+        parts.append(
+            "### Summary\n"
+            "One concise paragraph covering the main idea.\n"
+        )
+
+    if sections.get("key_points"):
+        parts.append(
+            f"### Key Points\n"
+            f"Cover {config['points']} key points. {config['depth_note']}\n"
+            "- **Point**: brief explanation\n"
+            '  > "Short direct quote from the source that supports this point."\n'
+        )
+
+    if sections.get("key_takeaways"):
+        parts.append(
+            "### Key Takeaways\n"
+            "Practical conclusions or actionable insights the reader should walk away with.\n"
+            "- **Takeaway**: what this means in practice\n"
+        )
+
+    if sections.get("key_terms"):
+        parts.append(
+            "### Key Terms\n"
+            "- **Term**: brief definition\n"
+            "(Only include this section if the text contains domain-specific vocabulary "
+            "worth defining. If there are no such terms, omit this section entirely.)\n"
+        )
+
+    if sections.get("questions"):
+        parts.append(
+            "### Questions to Explore\n"
+            "Thought-provoking questions raised by this content worth reflecting on.\n"
+            "- Question?\n"
+        )
+
+    parts.append(
+        "Rules:\n"
+        "- Key points must each include a blockquote pulled verbatim from the source.\n"
+        "- Do not add any sections beyond those listed above.\n"
+        "- Do not add any text outside of the requested sections.\n\n"
+        f"Text:\n{text}"
+    )
+
+    return "\n".join(parts)

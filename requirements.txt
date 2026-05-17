@@ -8,6 +8,10 @@ ollama
 youtube-transcript-api
 markdown
 
+# text-to-speech
+kokoro
+sounddevice
+
 # packaging
 pyinstaller
 

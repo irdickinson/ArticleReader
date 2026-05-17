@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         self.input_panel.process_btn.clicked.connect(self._on_process)
         self.input_panel.open_note_requested.connect(self.output_panel.open_file)
+        self.output_panel.tts_status.connect(self.status_bar.showMessage)
 
     def _start_ollama_polling(self) -> None:
         self._check_ollama_status()
@@ -110,7 +111,9 @@ class MainWindow(QMainWindow):
         self._throbber.show()
         self.status_bar.showMessage("Starting…")
 
-        self._worker = ProcessingWorker(sources, self.input_panel.detail_level)
+        self._worker = ProcessingWorker(
+            sources, self.input_panel.detail_level, self.input_panel.sections
+        )
         self._worker.progress.connect(self.status_bar.showMessage)
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)

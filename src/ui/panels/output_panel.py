@@ -2,10 +2,11 @@ from datetime import date
 from pathlib import Path
 
 import markdown as md
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QKeySequence, QPalette, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -17,6 +18,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from core.tts_worker import VOICES, TTSWorker
 
 
 def _build_css() -> str:
@@ -66,12 +69,15 @@ code {{ background: {code_bg}; padding: 1px 4px; border-radius: 3px; font-family
 
 
 class OutputPanel(QWidget):
+    tts_status = pyqtSignal(str)   # forwarded to main window status bar
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._raw_content = ""
         self._current_file: Path | None = None
         self._dirty = False
         self._last_save_dir = ""
+        self._tts_worker: TTSWorker | None = None
         self._build_ui()
         self._connect_signals()
 
@@ -80,6 +86,7 @@ class OutputPanel(QWidget):
     # ------------------------------------------------------------------
 
     def open_file(self, path: str) -> None:
+        self._stop_tts()
         p = Path(path)
         try:
             content = p.read_text(encoding="utf-8")
@@ -93,15 +100,16 @@ class OutputPanel(QWidget):
         self._render()
         self._update_file_label()
         has_content = bool(content.strip())
-        # Edit and Save are always available when a file is open
+        # Always enable Edit and Save when a file is open; Copy needs content
         self._edit_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
         self._copy_btn.setEnabled(has_content)
-        # Auto-enter edit mode for new empty files
+        self._read_btn.setEnabled(has_content)
         if not has_content:
-            self._edit_btn.setChecked(True)
+            self._edit_btn.setChecked(True)   # auto-enter edit mode for new empty files
 
     def set_content(self, markdown: str, file_path: str = "") -> None:
+        self._stop_tts()
         self._current_file = Path(file_path) if file_path else None
         self._dirty = False
         self._raw_content = markdown
@@ -112,6 +120,7 @@ class OutputPanel(QWidget):
         self._set_buttons_enabled(has_content)
 
     def clear(self) -> None:
+        self._stop_tts()
         self._raw_content = ""
         self._current_file = None
         self._dirty = False
@@ -127,8 +136,9 @@ class OutputPanel(QWidget):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
+        # Row 1: file label + edit/copy/save controls
         header_row = QHBoxLayout()
         self._file_label = QLabel("Notes")
         self._file_label.setStyleSheet("font-weight: bold; font-size: 15px;")
@@ -136,7 +146,7 @@ class OutputPanel(QWidget):
         self._edit_btn = QToolButton()
         self._edit_btn.setText("Edit")
         self._edit_btn.setCheckable(True)
-        self._edit_btn.setToolTip("Toggle edit mode (edits are saved with Ctrl+S)")
+        self._edit_btn.setToolTip("Toggle edit mode (Ctrl+S to save)")
         self._edit_btn.setEnabled(False)
 
         self._copy_btn = QToolButton()
@@ -154,6 +164,29 @@ class OutputPanel(QWidget):
         header_row.addWidget(self.save_btn)
         layout.addLayout(header_row)
 
+        # Row 2: TTS controls
+        tts_row = QHBoxLayout()
+        self._read_btn = QToolButton()
+        self._read_btn.setText("▶  Read Aloud")
+        self._read_btn.setEnabled(False)
+
+        self._stop_btn = QToolButton()
+        self._stop_btn.setText("■  Stop")
+        self._stop_btn.setEnabled(False)
+
+        self._voice_combo = QComboBox()
+        for display_name in VOICES:
+            self._voice_combo.addItem(display_name)
+        self._voice_combo.setToolTip("Select a voice for text-to-speech")
+
+        tts_row.addWidget(self._read_btn)
+        tts_row.addWidget(self._stop_btn)
+        tts_row.addStretch()
+        tts_row.addWidget(QLabel("Voice:"))
+        tts_row.addWidget(self._voice_combo)
+        layout.addLayout(tts_row)
+
+        # Content area
         self._browser = QTextBrowser()
         self._browser.setOpenExternalLinks(True)
         self._browser.setPlaceholderText(
@@ -173,6 +206,8 @@ class OutputPanel(QWidget):
         self._copy_btn.clicked.connect(self._on_copy)
         self._edit_btn.toggled.connect(self._on_toggle_edit)
         self._editor.textChanged.connect(self._on_text_changed)
+        self._read_btn.clicked.connect(self._on_read_aloud)
+        self._stop_btn.clicked.connect(self._on_stop_tts)
 
         shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
         shortcut.activated.connect(self._on_save)
@@ -216,9 +251,42 @@ class OutputPanel(QWidget):
         else:
             self._save_as()
 
+    def _on_read_aloud(self) -> None:
+        voice_id = VOICES[self._voice_combo.currentText()]
+        self._tts_worker = TTSWorker(self._raw_content, voice=voice_id)
+        self._tts_worker.status.connect(self._on_tts_status)
+        self._tts_worker.finished.connect(self._on_tts_finished)
+        self._tts_worker.error.connect(self._on_tts_error)
+        self._tts_worker.start()
+        self._read_btn.setEnabled(False)
+        self._stop_btn.setEnabled(True)
+
+    def _on_stop_tts(self) -> None:
+        self._stop_tts()
+
+    def _on_tts_status(self, msg: str) -> None:
+        self.tts_status.emit(msg)
+
+    def _on_tts_finished(self) -> None:
+        self._read_btn.setEnabled(bool(self._raw_content.strip()))
+        self._stop_btn.setEnabled(False)
+        self._tts_worker = None
+
+    def _on_tts_error(self, msg: str) -> None:
+        QMessageBox.warning(self, "TTS Error", msg)
+        self._on_tts_finished()
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _stop_tts(self) -> None:
+        if self._tts_worker and self._tts_worker.isRunning():
+            self._tts_worker.stop()
+            self._tts_worker.wait()
+        self._tts_worker = None
+        self._read_btn.setEnabled(bool(self._raw_content.strip()))
+        self._stop_btn.setEnabled(False)
 
     def _save_as(self) -> None:
         default_name = f"notes-{date.today()}.md"
@@ -252,6 +320,7 @@ class OutputPanel(QWidget):
         self.save_btn.setEnabled(enabled)
         self._copy_btn.setEnabled(enabled)
         self._edit_btn.setEnabled(enabled)
+        self._read_btn.setEnabled(enabled)
 
     def _update_file_label(self) -> None:
         if self._current_file:
