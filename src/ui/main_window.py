@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
     def _on_finished(self, markdown: str) -> None:
         self.output_panel.set_content(markdown)
         self.input_panel.set_processing(False)
+        self.input_panel.refresh_history()
         self.status_bar.showMessage("Done")
 
     def _on_error(self, message: str) -> None:

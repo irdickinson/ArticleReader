@@ -11,14 +11,17 @@ Use exactly this format and nothing else:
 One concise paragraph covering the main idea.
 
 ### Key Points
-- Bullet point
-- Bullet point
+- **Point**: brief explanation
+  > "Short direct quote from the source that supports this point."
 
 ### Key Terms
 - **Term**: brief definition
 
-Only include Key Terms if the text contains domain-specific vocabulary worth defining. \
+Rules:
+- Every key point must include a supporting blockquote pulled verbatim from the source text.
+- Only include Key Terms if the text contains domain-specific vocabulary worth defining. \
 If there are no such terms, omit that section entirely.
+- Do not add any text outside of these sections.
 
 Text:
 {text}
