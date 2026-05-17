@@ -1,3 +1,4 @@
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -100,10 +101,32 @@ class NotesTreeWidget(QTreeWidget):
             return
         path = Path(item.data(0, Qt.ItemDataRole.UserRole))
         menu = QMenu(self)
+        rename_action = menu.addAction("Rename")
         delete_action = menu.addAction("Delete")
         action = menu.exec(self.viewport().mapToGlobal(pos))
-        if action == delete_action:
+        if action == rename_action:
+            self._rename_item(path)
+        elif action == delete_action:
             self._delete_item(path)
+
+    def _rename_item(self, path: Path) -> None:
+        new_name, ok = QInputDialog.getText(
+            self, "Rename", "New name:", text=path.name
+        )
+        if not ok:
+            return
+        new_name = re.sub(r'[<>:"/\\|?*]', "-", new_name.strip()).strip()
+        if not new_name or new_name == path.name:
+            return
+        dest = path.parent / new_name
+        if dest.exists():
+            QMessageBox.warning(self, "Rename Failed", f"'{new_name}' already exists.")
+            return
+        try:
+            path.rename(dest)
+            self._panel.refresh_notes_tree()
+        except OSError as exc:
+            QMessageBox.critical(self, "Rename Failed", str(exc))
 
     def _delete_item(self, path: Path) -> None:
         kind = "folder" if path.is_dir() else "file"
