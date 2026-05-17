@@ -1,5 +1,11 @@
 PyQt6
 
+# core processing
+requests
+beautifulsoup4
+pdfplumber
+ollama
+
 # dev / code quality
 black
 flake8
