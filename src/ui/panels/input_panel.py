@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from core.extractor import is_youtube_url
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -129,11 +130,14 @@ class InputPanel(QWidget):
 # ------------------------------------------------------------------
 
 def _queue_summary(sources: list[str]) -> str:
-    urls = sum(1 for s in sources if s.startswith("http"))
+    youtube = sum(1 for s in sources if s.startswith("http") and is_youtube_url(s))
+    urls = sum(1 for s in sources if s.startswith("http") and not is_youtube_url(s))
     pdfs = sum(1 for s in sources if not s.startswith("http") and Path(s).suffix.lower() == ".pdf")
-    htmls = len(sources) - urls - pdfs
+    htmls = len(sources) - youtube - urls - pdfs
 
     parts: list[str] = []
+    if youtube:
+        parts.append(f"{youtube} YouTube video{'s' if youtube > 1 else ''}")
     if urls:
         parts.append(f"{urls} URL{'s' if urls > 1 else ''}")
     if pdfs:
