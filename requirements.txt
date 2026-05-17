@@ -5,6 +5,7 @@ requests
 beautifulsoup4
 pdfplumber
 ollama
+youtube-transcript-api
 
 # dev / code quality
 black
