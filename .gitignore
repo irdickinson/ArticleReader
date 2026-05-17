@@ -26,3 +26,8 @@ build/
 # IDE
 .vscode/
 .idea/
+
+# App data (generated at runtime)
+uploads/*
+!uploads/.gitkeep
+history.json

@@ -6,6 +6,7 @@ beautifulsoup4
 pdfplumber
 ollama
 youtube-transcript-api
+markdown
 
 # dev / code quality
 black
