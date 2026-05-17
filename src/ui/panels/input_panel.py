@@ -1,3 +1,4 @@
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -5,8 +6,11 @@ from core.extractor import is_youtube_url
 from core.history import HistoryStore
 from core.notes_store import create_folder, create_note, is_safe
 from core.paths import NOTES_DIR
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QPoint, Qt, pyqtSignal
+from PyQt6.QtGui import QDropEvent
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -15,6 +19,8 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
+    QMessageBox,
     QPushButton,
     QStyle,
     QTabWidget,
@@ -25,6 +31,98 @@ from PyQt6.QtWidgets import (
 )
 
 _TYPE_LABELS = {"youtube": "YT", "url": "URL", "pdf": "PDF", "html": "HTML"}
+
+
+class NotesTreeWidget(QTreeWidget):
+    """QTreeWidget with filesystem-backed drag-and-drop and right-click delete."""
+
+    def __init__(self, panel: "InputPanel") -> None:
+        super().__init__()
+        self._panel = panel
+        self.setHeaderHidden(True)
+        self.setAnimated(True)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        dragged = self.currentItem()
+        if not dragged:
+            event.ignore()
+            return
+
+        src_path = Path(dragged.data(0, Qt.ItemDataRole.UserRole))
+        target_item = self.itemAt(event.position().toPoint())
+
+        if target_item:
+            tgt_path = Path(target_item.data(0, Qt.ItemDataRole.UserRole))
+            dest_dir = tgt_path if tgt_path.is_dir() else tgt_path.parent
+        else:
+            dest_dir = NOTES_DIR
+
+        # Prevent moving a folder into its own subtree
+        try:
+            dest_dir.resolve().relative_to(src_path.resolve())
+            event.ignore()
+            return
+        except ValueError:
+            pass
+
+        dest = dest_dir / src_path.name
+        if dest == src_path:
+            event.ignore()
+            return
+
+        if dest.exists():
+            QMessageBox.warning(
+                self, "Move Failed",
+                f"'{src_path.name}' already exists in the destination.",
+            )
+            event.ignore()
+            return
+
+        try:
+            shutil.move(str(src_path), str(dest))
+        except OSError as exc:
+            QMessageBox.warning(self, "Move Failed", str(exc))
+            event.ignore()
+            return
+
+        event.accept()
+        self._panel.refresh_notes_tree()
+
+    def _on_context_menu(self, pos: QPoint) -> None:
+        item = self.itemAt(pos)
+        if not item:
+            return
+        path = Path(item.data(0, Qt.ItemDataRole.UserRole))
+        menu = QMenu(self)
+        delete_action = menu.addAction("Delete")
+        action = menu.exec(self.viewport().mapToGlobal(pos))
+        if action == delete_action:
+            self._delete_item(path)
+
+    def _delete_item(self, path: Path) -> None:
+        kind = "folder" if path.is_dir() else "file"
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Delete {kind} '{path.name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            self._panel.refresh_notes_tree()
+        except OSError as exc:
+            QMessageBox.critical(self, "Delete Failed", str(exc))
 
 
 class InputPanel(QWidget):
@@ -47,6 +145,10 @@ class InputPanel(QWidget):
         self._queued_sources.clear()
         self._refresh_queue_label()
         return sources
+
+    @property
+    def detail_level(self) -> str:
+        return self.detail_combo.currentText().lower()
 
     def set_processing(self, active: bool) -> None:
         self.url_input.setEnabled(not active)
@@ -111,6 +213,21 @@ class InputPanel(QWidget):
         layout.addWidget(self.queue_label)
         layout.addWidget(_divider())
 
+        detail_label = QLabel("Detail Level")
+        detail_label.setStyleSheet("font-weight: bold;")
+        self.detail_combo = QComboBox()
+        self.detail_combo.addItems(["Brief", "Standard", "Detailed"])
+        self.detail_combo.setCurrentIndex(1)
+        self.detail_combo.setToolTip(
+            "Brief: 3–4 key points\n"
+            "Standard: 5–7 key points\n"
+            "Detailed: 8–12 key points"
+        )
+
+        layout.addWidget(detail_label)
+        layout.addWidget(self.detail_combo)
+        layout.addWidget(_divider())
+
         self.process_btn = QPushButton("Process")
         self.process_btn.setEnabled(False)
         layout.addWidget(self.process_btn)
@@ -153,9 +270,7 @@ class InputPanel(QWidget):
         btn_row.addWidget(self._new_folder_btn)
         layout.addLayout(btn_row)
 
-        self._notes_tree = QTreeWidget()
-        self._notes_tree.setHeaderHidden(True)
-        self._notes_tree.setAnimated(True)
+        self._notes_tree = NotesTreeWidget(self)
         layout.addWidget(self._notes_tree)
 
         self.refresh_notes_tree()
@@ -246,7 +361,6 @@ class InputPanel(QWidget):
             self.open_note_requested.emit(str(path))
             self._tabs.setCurrentIndex(2)
         except ValueError as exc:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Invalid Path", str(exc))
 
     def _on_new_folder(self) -> None:
@@ -258,7 +372,6 @@ class InputPanel(QWidget):
             create_folder(name.strip(), parent)
             self.refresh_notes_tree()
         except ValueError as exc:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Invalid Path", str(exc))
 
     def _selected_notes_folder(self) -> Path | None:

@@ -14,9 +14,10 @@ class ProcessingWorker(QThread):
     finished = pyqtSignal(str, str)  # (markdown, saved_notes_path)
     error = pyqtSignal(str)
 
-    def __init__(self, sources: list[str]) -> None:
+    def __init__(self, sources: list[str], detail_level: str = "standard") -> None:
         super().__init__()
         self._sources = sources
+        self._detail_level = detail_level
 
     def run(self) -> None:
         sections: list[str] = []
@@ -29,7 +30,7 @@ class ProcessingWorker(QThread):
                 self.progress.emit(f"Extracting {i} of {total}: {label}")
                 title, text = extract(source)
                 self.progress.emit(f"Summarizing {i} of {total}: {title}")
-                notes = summarize(text)
+                notes = summarize(text, self._detail_level)
                 sections.append(_format_section(i, title, source, notes))
                 history.add(title, source, _source_type(source))
             except Exception as exc:

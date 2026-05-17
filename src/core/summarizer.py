@@ -2,6 +2,21 @@ import ollama
 
 MODEL = "llama3.1:8b"
 
+_DETAIL_CONFIGS: dict[str, dict[str, str]] = {
+    "brief": {
+        "points": "3–4",
+        "depth_note": "Be concise: one sentence per point.",
+    },
+    "standard": {
+        "points": "5–7",
+        "depth_note": "Balance breadth and depth.",
+    },
+    "detailed": {
+        "points": "8–12",
+        "depth_note": "Be thorough: include sub-points and nuance where relevant.",
+    },
+}
+
 _PROMPT = """\
 You are a precise note-taking assistant. Read the following text and produce structured markdown notes.
 
@@ -11,6 +26,7 @@ Use exactly this format and nothing else:
 One concise paragraph covering the main idea.
 
 ### Key Points
+Cover {points} key points. {depth_note}
 - **Point**: brief explanation
   > "Short direct quote from the source that supports this point."
 
@@ -28,9 +44,11 @@ Text:
 """
 
 
-def summarize(text: str) -> str:
+def summarize(text: str, detail_level: str = "standard") -> str:
+    config = _DETAIL_CONFIGS.get(detail_level, _DETAIL_CONFIGS["standard"])
+    prompt = _PROMPT.format(text=text, **config)
     response = ollama.chat(
         model=MODEL,
-        messages=[{"role": "user", "content": _PROMPT.format(text=text)}],
+        messages=[{"role": "user", "content": prompt}],
     )
     return response["message"]["content"].strip()

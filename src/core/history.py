@@ -61,6 +61,8 @@ class HistoryStore:
         source_type: str,
         notes_path: str | None = None,
     ) -> HistoryEntry:
+        # Keep only the latest entry for each unique source
+        self._entries = [e for e in self._entries if e.source != source]
         cached_path = None
         if source_type in ("pdf", "html") and not source.startswith("http"):
             cached_path = _cache_file(source)

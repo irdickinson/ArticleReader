@@ -93,7 +93,13 @@ class OutputPanel(QWidget):
         self._render()
         self._update_file_label()
         has_content = bool(content.strip())
-        self._set_buttons_enabled(has_content)
+        # Edit and Save are always available when a file is open
+        self._edit_btn.setEnabled(True)
+        self.save_btn.setEnabled(True)
+        self._copy_btn.setEnabled(has_content)
+        # Auto-enter edit mode for new empty files
+        if not has_content:
+            self._edit_btn.setChecked(True)
 
     def set_content(self, markdown: str, file_path: str = "") -> None:
         self._current_file = Path(file_path) if file_path else None
