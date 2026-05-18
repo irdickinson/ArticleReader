@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.tts_worker import VOICES, TTSWorker
+from core.tts_worker import SPEEDS, VOICES, TTSWorker
 
 
 def _build_css() -> str:
@@ -179,9 +179,18 @@ class OutputPanel(QWidget):
             self._voice_combo.addItem(display_name)
         self._voice_combo.setToolTip("Select a voice for text-to-speech")
 
+        self._speed_combo = QComboBox()
+        for label in SPEEDS:
+            self._speed_combo.addItem(label)
+        self._speed_combo.setCurrentText("1×")
+        self._speed_combo.setToolTip("Playback speed")
+        self._speed_combo.setMaximumWidth(64)
+
         tts_row.addWidget(self._read_btn)
         tts_row.addWidget(self._stop_btn)
         tts_row.addStretch()
+        tts_row.addWidget(QLabel("Speed:"))
+        tts_row.addWidget(self._speed_combo)
         tts_row.addWidget(QLabel("Voice:"))
         tts_row.addWidget(self._voice_combo)
         layout.addLayout(tts_row)
@@ -253,7 +262,8 @@ class OutputPanel(QWidget):
 
     def _on_read_aloud(self) -> None:
         voice_id = VOICES[self._voice_combo.currentText()]
-        self._tts_worker = TTSWorker(self._raw_content, voice=voice_id)
+        rate = SPEEDS[self._speed_combo.currentText()]
+        self._tts_worker = TTSWorker(self._raw_content, voice=voice_id, rate=rate)
         self._tts_worker.status.connect(self._on_tts_status)
         self._tts_worker.finished.connect(self._on_tts_finished)
         self._tts_worker.error.connect(self._on_tts_error)

@@ -17,10 +17,16 @@ class TTSWorker(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, text: str, voice: str = "en-US-AriaNeural") -> None:
+    def __init__(
+        self,
+        text: str,
+        voice: str = "en-US-AriaNeural",
+        rate: str = "+0%",
+    ) -> None:
         super().__init__()
         self._text = text
         self._voice = voice
+        self._rate = rate
         self._stop_event = threading.Event()
 
     def stop(self) -> None:
@@ -54,7 +60,7 @@ class TTSWorker(QThread):
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                 tmp = f.name
 
-            asyncio.run(_synthesize(text, self._voice, tmp))
+            asyncio.run(_synthesize(text, self._voice, self._rate, tmp))
 
             if self._stop_event.is_set():
                 return
@@ -71,10 +77,21 @@ class TTSWorker(QThread):
                 os.unlink(tmp)
 
 
-async def _synthesize(text: str, voice: str, output_path: str) -> None:
-    communicate = edge_tts.Communicate(text, voice)
+async def _synthesize(text: str, voice: str, rate: str, output_path: str) -> None:
+    communicate = edge_tts.Communicate(text, voice, rate=rate)
     await communicate.save(output_path)
 
+
+# Display name → edge-tts SSML rate string
+SPEEDS: dict[str, str] = {
+    "0.5×":  "-50%",
+    "0.75×": "-25%",
+    "1×":    "+0%",
+    "1.25×": "+25%",
+    "1.5×":  "+50%",
+    "1.75×": "+75%",
+    "2×":    "+100%",
+}
 
 # Display name → edge-tts voice ID
 VOICES: dict[str, str] = {
