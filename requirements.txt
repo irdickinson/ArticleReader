@@ -9,8 +9,10 @@ youtube-transcript-api
 markdown
 
 # text-to-speech
-kokoro
+edge-tts
+miniaudio
 sounddevice
+numpy
 
 # packaging
 pyinstaller
