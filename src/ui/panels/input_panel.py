@@ -1,43 +1,169 @@
+import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
 from core.extractor import is_youtube_url
 from core.history import HistoryStore
-from PyQt6.QtCore import Qt
+from core.notes_store import create_folder, create_note, is_safe
+from core.paths import NOTES_DIR
+from PyQt6.QtCore import QPoint, Qt, pyqtSignal
+from PyQt6.QtGui import QDropEvent
 from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
+    QAbstractItemView,
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
-    QPushButton,
-    QFrame,
-    QFileDialog,
-    QTabWidget,
     QListWidget,
     QListWidgetItem,
-    QSizePolicy,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QStyle,
+    QTabWidget,
+    QToolButton,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
-_TYPE_LABELS = {
-    "youtube": "YT",
-    "url": "URL",
-    "pdf": "PDF",
-    "html": "HTML",
-}
+_TYPE_LABELS = {"youtube": "YT", "url": "URL", "pdf": "PDF", "html": "HTML"}
+
+
+class NotesTreeWidget(QTreeWidget):
+    """QTreeWidget with filesystem-backed drag-and-drop, rename, and delete."""
+
+    def __init__(self, panel: "InputPanel") -> None:
+        super().__init__()
+        self._panel = panel
+        self.setHeaderHidden(True)
+        self.setAnimated(True)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        dragged = self.currentItem()
+        if not dragged:
+            event.ignore()
+            return
+
+        src_path = Path(dragged.data(0, Qt.ItemDataRole.UserRole))
+        target_item = self.itemAt(event.position().toPoint())
+
+        if target_item:
+            tgt_path = Path(target_item.data(0, Qt.ItemDataRole.UserRole))
+            dest_dir = tgt_path if tgt_path.is_dir() else tgt_path.parent
+        else:
+            dest_dir = NOTES_DIR
+
+        # Prevent moving a folder into its own subtree
+        try:
+            dest_dir.resolve().relative_to(src_path.resolve())
+            event.ignore()
+            return
+        except ValueError:
+            pass
+
+        dest = dest_dir / src_path.name
+        if dest == src_path:
+            event.ignore()
+            return
+
+        if dest.exists():
+            QMessageBox.warning(
+                self, "Move Failed",
+                f"'{src_path.name}' already exists in the destination.",
+            )
+            event.ignore()
+            return
+
+        try:
+            shutil.move(str(src_path), str(dest))
+        except OSError as exc:
+            QMessageBox.warning(self, "Move Failed", str(exc))
+            event.ignore()
+            return
+
+        event.accept()
+        self._panel.refresh_notes_tree()
+
+    def _on_context_menu(self, pos: QPoint) -> None:
+        item = self.itemAt(pos)
+        if not item:
+            return
+        path = Path(item.data(0, Qt.ItemDataRole.UserRole))
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename")
+        delete_action = menu.addAction("Delete")
+        action = menu.exec(self.viewport().mapToGlobal(pos))
+        if action == rename_action:
+            self._rename_item(path)
+        elif action == delete_action:
+            self._delete_item(path)
+
+    def _rename_item(self, path: Path) -> None:
+        new_name, ok = QInputDialog.getText(
+            self, "Rename", "New name:", text=path.name
+        )
+        if not ok:
+            return
+        new_name = re.sub(r'[<>:"/\\|?*]', "-", new_name.strip()).strip()
+        if not new_name or new_name == path.name:
+            return
+        dest = path.parent / new_name
+        if dest.exists():
+            QMessageBox.warning(self, "Rename Failed", f"'{new_name}' already exists.")
+            return
+        try:
+            path.rename(dest)
+            self._panel.refresh_notes_tree()
+        except OSError as exc:
+            QMessageBox.critical(self, "Rename Failed", str(exc))
+
+    def _delete_item(self, path: Path) -> None:
+        kind = "folder" if path.is_dir() else "file"
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Delete {kind} '{path.name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            self._panel.refresh_notes_tree()
+        except OSError as exc:
+            QMessageBox.critical(self, "Delete Failed", str(exc))
 
 
 class InputPanel(QWidget):
+    open_note_requested = pyqtSignal(str)   # absolute path to a .md file
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setMinimumWidth(240)
-        self.setMaximumWidth(380)
+        self.setMaximumWidth(400)
         self._queued_sources: list[str] = []
         self._build_ui()
         self._connect_signals()
 
     # ------------------------------------------------------------------
-    # Public API used by MainWindow
+    # Public API
     # ------------------------------------------------------------------
 
     def take_sources(self) -> list[str]:
@@ -45,6 +171,28 @@ class InputPanel(QWidget):
         self._queued_sources.clear()
         self._refresh_queue_label()
         return sources
+
+    @property
+    def detail_level(self) -> str:
+        return self.detail_combo.currentText().lower()
+
+    @property
+    def model(self) -> str | None:
+        text = self.model_combo.currentText().strip()
+        return text if text else None
+
+    def refresh_models(self) -> None:
+        self._refresh_models()
+
+    @property
+    def sections(self) -> dict[str, bool]:
+        return {
+            "summary":       self._chk_summary.isChecked(),
+            "key_points":    self._chk_key_points.isChecked(),
+            "key_takeaways": self._chk_takeaways.isChecked(),
+            "key_terms":     self._chk_key_terms.isChecked(),
+            "questions":     self._chk_questions.isChecked(),
+        }
 
     def set_processing(self, active: bool) -> None:
         self.url_input.setEnabled(not active)
@@ -54,9 +202,13 @@ class InputPanel(QWidget):
 
     def refresh_history(self) -> None:
         self._history_list.clear()
-        store = HistoryStore()
-        for entry in store.entries():
+        for entry in HistoryStore().entries():
             self._history_list.addItem(_make_history_item(entry))
+
+    def refresh_notes_tree(self) -> None:
+        self._notes_tree.clear()
+        if NOTES_DIR.exists():
+            _populate_tree(self._notes_tree.invisibleRootItem(), NOTES_DIR, self)
 
     # ------------------------------------------------------------------
     # Build
@@ -70,6 +222,7 @@ class InputPanel(QWidget):
         self._tabs = QTabWidget()
         self._tabs.addTab(self._build_add_tab(), "Add Sources")
         self._tabs.addTab(self._build_history_tab(), "History")
+        self._tabs.addTab(self._build_notes_tab(), "Notes")
         layout.addWidget(self._tabs)
 
     def _build_add_tab(self) -> QWidget:
@@ -78,7 +231,7 @@ class InputPanel(QWidget):
         layout.setContentsMargins(16, 20, 16, 20)
         layout.setSpacing(10)
 
-        # URL
+        # URL input
         url_label = QLabel("URL")
         url_label.setStyleSheet("font-weight: bold;")
         self.url_input = QLineEdit()
@@ -91,7 +244,7 @@ class InputPanel(QWidget):
         layout.addWidget(self.add_url_btn)
         layout.addWidget(_divider())
 
-        # File
+        # File upload
         file_label = QLabel("File")
         file_label.setStyleSheet("font-weight: bold;")
         self.upload_btn = QPushButton("Upload File (HTML / PDF)")
@@ -100,19 +253,74 @@ class InputPanel(QWidget):
         layout.addWidget(self.upload_btn)
         layout.addWidget(_divider())
 
-        # Queue
+        # Queue status
         self.queue_label = QLabel("No sources queued")
         self.queue_label.setStyleSheet("color: grey; font-size: 11px;")
         self.queue_label.setWordWrap(True)
         layout.addWidget(self.queue_label)
         layout.addWidget(_divider())
 
-        # Process
+        # Summary settings
+        settings_label = QLabel("Summary Settings")
+        settings_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(settings_label)
+
+        detail_row = QHBoxLayout()
+        detail_row.addWidget(QLabel("Detail:"))
+        self.detail_combo = QComboBox()
+        self.detail_combo.addItems(["Brief", "Standard", "Detailed"])
+        self.detail_combo.setCurrentIndex(1)
+        self.detail_combo.setToolTip(
+            "Brief: 3–4 key points\n"
+            "Standard: 5–7 key points\n"
+            "Detailed: 8–12 key points"
+        )
+        detail_row.addWidget(self.detail_combo)
+        layout.addLayout(detail_row)
+
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("Model:"))
+        self.model_combo = QComboBox()
+        self.model_combo.setToolTip("Ollama model to use for summarization")
+        self._refresh_model_btn = QToolButton()
+        self._refresh_model_btn.setText("↻")
+        self._refresh_model_btn.setToolTip("Refresh model list from Ollama")
+        model_row.addWidget(self.model_combo, 1)
+        model_row.addWidget(self._refresh_model_btn)
+        layout.addLayout(model_row)
+        self._refresh_models()
+
+        sections_label = QLabel("Include sections:")
+        sections_label.setStyleSheet("font-size: 11px; color: grey;")
+        layout.addWidget(sections_label)
+
+        self._chk_summary    = QCheckBox("Summary")
+        self._chk_key_points = QCheckBox("Key Points")
+        self._chk_takeaways  = QCheckBox("Key Takeaways")
+        self._chk_key_terms  = QCheckBox("Key Terms")
+        self._chk_questions  = QCheckBox("Questions to Explore")
+
+        self._chk_summary.setChecked(True)
+        self._chk_key_points.setChecked(True)
+        self._chk_takeaways.setChecked(False)
+        self._chk_key_terms.setChecked(True)
+        self._chk_questions.setChecked(False)
+
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        grid.addWidget(self._chk_summary,    0, 0)
+        grid.addWidget(self._chk_key_points, 0, 1)
+        grid.addWidget(self._chk_takeaways,  1, 0)
+        grid.addWidget(self._chk_key_terms,  1, 1)
+        grid.addWidget(self._chk_questions,  2, 0, 1, 2)
+        layout.addLayout(grid)
+
+        layout.addWidget(_divider())
+
         self.process_btn = QPushButton("Process")
         self.process_btn.setEnabled(False)
         layout.addWidget(self.process_btn)
         layout.addStretch()
-
         return widget
 
     def _build_history_tab(self) -> QWidget:
@@ -126,11 +334,35 @@ class InputPanel(QWidget):
         self._history_list.setSpacing(2)
         layout.addWidget(self._history_list)
 
-        self._requeue_btn = QPushButton("Add to Queue")
+        btn_row = QHBoxLayout()
+        self._open_notes_btn = QPushButton("Open Notes")
+        self._open_notes_btn.setEnabled(False)
+        self._requeue_btn = QPushButton("Re-queue")
         self._requeue_btn.setEnabled(False)
-        layout.addWidget(self._requeue_btn)
+        btn_row.addWidget(self._open_notes_btn)
+        btn_row.addWidget(self._requeue_btn)
+        layout.addLayout(btn_row)
 
         self.refresh_history()
+        return widget
+
+    def _build_notes_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(8, 12, 8, 12)
+        layout.setSpacing(8)
+
+        btn_row = QHBoxLayout()
+        self._new_note_btn = QPushButton("New Note")
+        self._new_folder_btn = QPushButton("New Folder")
+        btn_row.addWidget(self._new_note_btn)
+        btn_row.addWidget(self._new_folder_btn)
+        layout.addLayout(btn_row)
+
+        self._notes_tree = NotesTreeWidget(self)
+        layout.addWidget(self._notes_tree)
+
+        self.refresh_notes_tree()
         return widget
 
     # ------------------------------------------------------------------
@@ -138,13 +370,19 @@ class InputPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _connect_signals(self) -> None:
-        self.url_input.textChanged.connect(self._on_url_text_changed)
+        self.url_input.textChanged.connect(self._on_url_changed)
         self.add_url_btn.clicked.connect(self._on_add_url)
         self.upload_btn.clicked.connect(self._on_upload_file)
         self._history_list.itemSelectionChanged.connect(self._on_history_selection)
+        self._history_list.itemDoubleClicked.connect(self._on_history_double_click)
+        self._open_notes_btn.clicked.connect(self._on_open_notes)
         self._requeue_btn.clicked.connect(self._on_requeue)
+        self._notes_tree.itemDoubleClicked.connect(self._on_notes_item_double_click)
+        self._new_note_btn.clicked.connect(self._on_new_note)
+        self._new_folder_btn.clicked.connect(self._on_new_folder)
+        self._refresh_model_btn.clicked.connect(self._refresh_models)
 
-    def _on_url_text_changed(self, text: str) -> None:
+    def _on_url_changed(self, text: str) -> None:
         self.add_url_btn.setEnabled(bool(text.strip()))
 
     def _on_add_url(self) -> None:
@@ -157,9 +395,7 @@ class InputPanel(QWidget):
 
     def _on_upload_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select File",
-            "",
+            self, "Select File", "",
             "Supported Files (*.html *.htm *.pdf);;HTML Files (*.html *.htm);;PDF Files (*.pdf)",
         )
         if path:
@@ -167,7 +403,27 @@ class InputPanel(QWidget):
             self._refresh_queue_label()
 
     def _on_history_selection(self) -> None:
-        self._requeue_btn.setEnabled(bool(self._history_list.selectedItems()))
+        item = self._history_list.currentItem()
+        if not item:
+            self._open_notes_btn.setEnabled(False)
+            self._requeue_btn.setEnabled(False)
+            return
+        notes_path = item.data(Qt.ItemDataRole.UserRole + 1)
+        self._open_notes_btn.setEnabled(bool(notes_path and Path(notes_path).exists()))
+        self._requeue_btn.setEnabled(True)
+
+    def _on_history_double_click(self, item: QListWidgetItem) -> None:
+        notes_path = item.data(Qt.ItemDataRole.UserRole + 1)
+        if notes_path and Path(notes_path).exists():
+            self.open_note_requested.emit(notes_path)
+
+    def _on_open_notes(self) -> None:
+        item = self._history_list.currentItem()
+        if not item:
+            return
+        notes_path = item.data(Qt.ItemDataRole.UserRole + 1)
+        if notes_path and Path(notes_path).exists():
+            self.open_note_requested.emit(notes_path)
 
     def _on_requeue(self) -> None:
         item = self._history_list.currentItem()
@@ -178,6 +434,60 @@ class InputPanel(QWidget):
             self._queued_sources.append(source)
             self._refresh_queue_label()
             self._tabs.setCurrentIndex(0)
+
+    def _on_notes_item_double_click(self, item: QTreeWidgetItem, _col: int) -> None:
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        if path and Path(path).is_file():
+            self.open_note_requested.emit(path)
+
+    def _on_new_note(self) -> None:
+        folder = self._selected_notes_folder()
+        name, ok = QInputDialog.getText(self, "New Note", "Note name:")
+        if not ok or not name.strip():
+            return
+        try:
+            path = create_note(name.strip(), folder)
+            self.refresh_notes_tree()
+            self.open_note_requested.emit(str(path))
+            self._tabs.setCurrentIndex(2)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Path", str(exc))
+
+    def _on_new_folder(self) -> None:
+        parent = self._selected_notes_folder()
+        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+        if not ok or not name.strip():
+            return
+        try:
+            create_folder(name.strip(), parent)
+            self.refresh_notes_tree()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid Path", str(exc))
+
+    def _selected_notes_folder(self) -> Path | None:
+        item = self._notes_tree.currentItem()
+        if not item:
+            return None
+        path_str = item.data(0, Qt.ItemDataRole.UserRole)
+        if not path_str:
+            return None
+        path = Path(path_str)
+        candidate = path if path.is_dir() else path.parent
+        return candidate if is_safe(candidate) else None
+
+    def _refresh_models(self) -> None:
+        current = self.model_combo.currentText()
+        self.model_combo.clear()
+        try:
+            import ollama
+            result = ollama.list()
+            for m in result.models:
+                self.model_combo.addItem(m.model)
+            idx = self.model_combo.findText(current)
+            if idx >= 0:
+                self.model_combo.setCurrentIndex(idx)
+        except Exception:
+            self.model_combo.addItem("llama3.1:8b")
 
     def _refresh_queue_label(self) -> None:
         count = len(self._queued_sources)
@@ -193,6 +503,28 @@ class InputPanel(QWidget):
 # Helpers
 # ------------------------------------------------------------------
 
+def _populate_tree(parent_item: QTreeWidgetItem, folder: Path, panel: InputPanel) -> None:
+    dirs = sorted(p for p in folder.iterdir() if p.is_dir())
+    files = sorted(p for p in folder.iterdir() if p.is_file() and p.name != ".gitkeep")
+
+    style = panel.style()
+    dir_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
+    file_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+
+    for d in dirs:
+        item = QTreeWidgetItem([d.name])
+        item.setIcon(0, dir_icon)
+        item.setData(0, Qt.ItemDataRole.UserRole, str(d))
+        _populate_tree(item, d, panel)
+        parent_item.addChild(item)
+
+    for f in files:
+        item = QTreeWidgetItem([f.name])
+        item.setIcon(0, file_icon)
+        item.setData(0, Qt.ItemDataRole.UserRole, str(f))
+        parent_item.addChild(item)
+
+
 def _make_history_item(entry) -> QListWidgetItem:
     type_label = _TYPE_LABELS.get(entry.source_type, "?")
     try:
@@ -201,8 +533,11 @@ def _make_history_item(entry) -> QListWidgetItem:
     except ValueError:
         date_str = entry.processed_at[:10]
 
-    item = QListWidgetItem(f"[{type_label}] {entry.title}\n{date_str}")
+    has_notes = bool(entry.notes_path and Path(entry.notes_path).exists())
+    suffix = " 📄" if has_notes else ""
+    item = QListWidgetItem(f"[{type_label}] {entry.title}{suffix}\n{date_str}")
     item.setData(Qt.ItemDataRole.UserRole, entry.requeue_path)
+    item.setData(Qt.ItemDataRole.UserRole + 1, entry.notes_path)
     item.setToolTip(entry.source)
     return item
 
@@ -212,7 +547,6 @@ def _queue_summary(sources: list[str]) -> str:
     urls = sum(1 for s in sources if s.startswith("http") and not is_youtube_url(s))
     pdfs = sum(1 for s in sources if not s.startswith("http") and Path(s).suffix.lower() == ".pdf")
     htmls = len(sources) - youtube - urls - pdfs
-
     parts: list[str] = []
     if youtube:
         parts.append(f"{youtube} YouTube video{'s' if youtube > 1 else ''}")

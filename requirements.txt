@@ -8,6 +8,12 @@ ollama
 youtube-transcript-api
 markdown
 
+# text-to-speech
+edge-tts
+miniaudio
+sounddevice
+numpy
+
 # packaging
 pyinstaller
 
