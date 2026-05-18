@@ -83,6 +83,7 @@ class MainWindow(QMainWindow):
         if _ollama_running():
             self._ollama_label.setText("● Ollama ready")
             self._ollama_label.setStyleSheet("color: #4caf50; font-size: 11px;")
+            self.input_panel.refresh_models()
         else:
             self._ollama_label.setText("● Ollama not running")
             self._ollama_label.setStyleSheet("color: #f44336; font-size: 11px;")
@@ -112,7 +113,10 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("Starting…")
 
         self._worker = ProcessingWorker(
-            sources, self.input_panel.detail_level, self.input_panel.sections
+            sources,
+            self.input_panel.detail_level,
+            self.input_panel.sections,
+            self.input_panel.model,
         )
         self._worker.progress.connect(self.status_bar.showMessage)
         self._worker.finished.connect(self._on_finished)
@@ -125,6 +129,8 @@ class MainWindow(QMainWindow):
             self.output_panel.open_file(notes_path)
         else:
             self.output_panel.set_content(markdown)
+        if self._worker:
+            self.output_panel.set_raw_source(self._worker.raw_source_text)
         self.input_panel.set_processing(False)
         self.input_panel.refresh_history()
         self.input_panel.refresh_notes_tree()

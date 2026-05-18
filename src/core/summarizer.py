@@ -30,12 +30,13 @@ def summarize(
     text: str,
     detail_level: str = "standard",
     sections: dict[str, bool] | None = None,
+    model: str | None = None,
 ) -> str:
     active = {**_DEFAULT_SECTIONS, **(sections or {})}
     config = _DETAIL_CONFIGS.get(detail_level, _DETAIL_CONFIGS["standard"])
     prompt = _build_prompt(text, config, active)
     response = ollama.chat(
-        model=MODEL,
+        model=model or MODEL,
         messages=[{"role": "user", "content": prompt}],
     )
     return response["message"]["content"].strip()
@@ -86,11 +87,25 @@ def _build_prompt(
             "- Question?\n"
         )
 
+    _SECTION_LABELS = {
+        "summary":       "Summary",
+        "key_points":    "Key Points",
+        "key_takeaways": "Key Takeaways",
+        "key_terms":     "Key Terms",
+        "questions":     "Questions to Explore",
+    }
+    disabled = [_SECTION_LABELS[k] for k, v in sections.items() if not v and k in _SECTION_LABELS]
+    exclusion_line = (
+        f"CRITICAL: Do NOT include these sections under any circumstances: {', '.join(disabled)}.\n"
+        if disabled else ""
+    )
+
     parts.append(
+        f"{exclusion_line}"
         "Rules:\n"
+        "- Only output the sections listed above. Nothing else.\n"
         "- Key points must each include a blockquote pulled verbatim from the source.\n"
-        "- Do not add any sections beyond those listed above.\n"
-        "- Do not add any text outside of the requested sections.\n\n"
+        "- Do not add any text, headers, or commentary outside the requested sections.\n\n"
         f"Text:\n{text}"
     )
 

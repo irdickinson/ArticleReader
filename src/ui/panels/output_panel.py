@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.tts_worker import SPEEDS, VOICES, TTSWorker
+from core.tts_worker import SPEEDS, VOLUMES, VOICES, TTSWorker
 
 
 def _build_css() -> str:
@@ -65,17 +65,20 @@ li {{ margin-bottom: 4px; }}
 hr {{ border: none; border-top: 1px solid {hr_color}; margin: 20px 0; }}
 strong {{ font-weight: 600; }}
 code {{ background: {code_bg}; padding: 1px 4px; border-radius: 3px; font-family: Consolas, monospace; }}
+pre {{ background: {code_bg}; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-break: break-word; }}
 </style>"""
 
 
 class OutputPanel(QWidget):
-    tts_status = pyqtSignal(str)   # forwarded to main window status bar
+    tts_status = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._raw_content = ""
+        self._raw_source = ""
         self._current_file: Path | None = None
         self._dirty = False
+        self._viewing_source = False
         self._last_save_dir = ""
         self._tts_worker: TTSWorker | None = None
         self._build_ui()
@@ -97,16 +100,16 @@ class OutputPanel(QWidget):
         self._dirty = False
         self._raw_content = content
         self._load_into_editor(content)
+        self._exit_source_view()
         self._render()
         self._update_file_label()
         has_content = bool(content.strip())
-        # Always enable Edit and Save when a file is open; Copy needs content
         self._edit_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
         self._copy_btn.setEnabled(has_content)
         self._read_btn.setEnabled(has_content)
         if not has_content:
-            self._edit_btn.setChecked(True)   # auto-enter edit mode for new empty files
+            self._edit_btn.setChecked(True)
 
     def set_content(self, markdown: str, file_path: str = "") -> None:
         self._stop_tts()
@@ -114,19 +117,30 @@ class OutputPanel(QWidget):
         self._dirty = False
         self._raw_content = markdown
         self._load_into_editor(markdown)
+        self._exit_source_view()
         self._render()
         self._update_file_label()
         has_content = bool(markdown.strip())
         self._set_buttons_enabled(has_content)
 
+    def set_raw_source(self, text: str) -> None:
+        self._raw_source = text
+        has_source = bool(text.strip())
+        self._source_btn.setEnabled(has_source)
+        if not has_source and self._viewing_source:
+            self._source_btn.setChecked(False)
+
     def clear(self) -> None:
         self._stop_tts()
         self._raw_content = ""
+        self._raw_source = ""
         self._current_file = None
         self._dirty = False
+        self._exit_source_view()
         self._browser.clear()
         self._load_into_editor("")
         self._set_buttons_enabled(False)
+        self._source_btn.setEnabled(False)
         self._file_label.setText("Notes")
 
     # ------------------------------------------------------------------
@@ -138,27 +152,34 @@ class OutputPanel(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(8)
 
-        # Row 1: file label + edit/copy/save controls
+        # Row 1: file label + note controls
         header_row = QHBoxLayout()
         self._file_label = QLabel("Notes")
         self._file_label.setStyleSheet("font-weight: bold; font-size: 15px;")
 
+        self._source_btn = QToolButton()
+        self._source_btn.setText("Source Text")
+        self._source_btn.setCheckable(True)
+        self._source_btn.setEnabled(False)
+        self._source_btn.setToolTip("View the original extracted text / transcript")
+
         self._edit_btn = QToolButton()
         self._edit_btn.setText("Edit")
         self._edit_btn.setCheckable(True)
-        self._edit_btn.setToolTip("Toggle edit mode (Ctrl+S to save)")
         self._edit_btn.setEnabled(False)
+        self._edit_btn.setToolTip("Toggle edit mode (Ctrl+S to save)")
 
         self._copy_btn = QToolButton()
         self._copy_btn.setText("Copy")
-        self._copy_btn.setToolTip("Copy raw markdown to clipboard")
         self._copy_btn.setEnabled(False)
+        self._copy_btn.setToolTip("Copy to clipboard")
 
         self.save_btn = QPushButton("Save")
         self.save_btn.setEnabled(False)
 
         header_row.addWidget(self._file_label)
         header_row.addStretch()
+        header_row.addWidget(self._source_btn)
         header_row.addWidget(self._edit_btn)
         header_row.addWidget(self._copy_btn)
         header_row.addWidget(self.save_btn)
@@ -174,21 +195,30 @@ class OutputPanel(QWidget):
         self._stop_btn.setText("■  Stop")
         self._stop_btn.setEnabled(False)
 
-        self._voice_combo = QComboBox()
-        for display_name in VOICES:
-            self._voice_combo.addItem(display_name)
-        self._voice_combo.setToolTip("Select a voice for text-to-speech")
+        self._volume_combo = QComboBox()
+        for label in VOLUMES:
+            self._volume_combo.addItem(label)
+        self._volume_combo.setCurrentText("100%")
+        self._volume_combo.setToolTip("Volume")
+        self._volume_combo.setMaximumWidth(64)
 
         self._speed_combo = QComboBox()
         for label in SPEEDS:
             self._speed_combo.addItem(label)
         self._speed_combo.setCurrentText("1×")
-        self._speed_combo.setToolTip("Playback speed")
+        self._speed_combo.setToolTip("Speed")
         self._speed_combo.setMaximumWidth(64)
+
+        self._voice_combo = QComboBox()
+        for display_name in VOICES:
+            self._voice_combo.addItem(display_name)
+        self._voice_combo.setToolTip("Voice")
 
         tts_row.addWidget(self._read_btn)
         tts_row.addWidget(self._stop_btn)
         tts_row.addStretch()
+        tts_row.addWidget(QLabel("Vol:"))
+        tts_row.addWidget(self._volume_combo)
         tts_row.addWidget(QLabel("Speed:"))
         tts_row.addWidget(self._speed_combo)
         tts_row.addWidget(QLabel("Voice:"))
@@ -214,6 +244,7 @@ class OutputPanel(QWidget):
         self.save_btn.clicked.connect(self._on_save)
         self._copy_btn.clicked.connect(self._on_copy)
         self._edit_btn.toggled.connect(self._on_toggle_edit)
+        self._source_btn.toggled.connect(self._on_toggle_source)
         self._editor.textChanged.connect(self._on_text_changed)
         self._read_btn.clicked.connect(self._on_read_aloud)
         self._stop_btn.clicked.connect(self._on_stop_tts)
@@ -226,12 +257,19 @@ class OutputPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _on_copy(self) -> None:
-        QApplication.clipboard().setText(self._raw_content)
+        text = self._raw_source if self._viewing_source else self._raw_content
+        QApplication.clipboard().setText(text)
         self._copy_btn.setText("Copied!")
         QTimer.singleShot(1500, lambda: self._copy_btn.setText("Copy"))
 
     def _on_toggle_edit(self, checked: bool) -> None:
         if checked:
+            # Can't edit while viewing source
+            if self._viewing_source:
+                self._edit_btn.blockSignals(True)
+                self._edit_btn.setChecked(False)
+                self._edit_btn.blockSignals(False)
+                return
             self._browser.hide()
             self._editor.show()
             self._editor.setFocus()
@@ -241,15 +279,30 @@ class OutputPanel(QWidget):
             self._browser.show()
             self._render()
 
+    def _on_toggle_source(self, checked: bool) -> None:
+        self._viewing_source = checked
+        if checked:
+            self._source_btn.setText("← Notes")
+            # Exit edit mode first
+            if self._edit_btn.isChecked():
+                self._edit_btn.setChecked(False)
+            self._edit_btn.setEnabled(False)
+            self._render_source()
+        else:
+            self._source_btn.setText("Source Text")
+            self._edit_btn.setEnabled(bool(self._raw_content))
+            self._render()
+
     def _on_text_changed(self) -> None:
         if not self._dirty:
             self._dirty = True
             self._update_file_label()
 
     def _on_save(self) -> None:
+        if self._viewing_source:
+            return
         if self._edit_btn.isChecked():
             self._raw_content = self._editor.toPlainText()
-
         if self._current_file:
             try:
                 self._current_file.write_text(self._raw_content, encoding="utf-8")
@@ -261,9 +314,11 @@ class OutputPanel(QWidget):
             self._save_as()
 
     def _on_read_aloud(self) -> None:
+        text = self._raw_source if self._viewing_source else self._raw_content
         voice_id = VOICES[self._voice_combo.currentText()]
         rate = SPEEDS[self._speed_combo.currentText()]
-        self._tts_worker = TTSWorker(self._raw_content, voice=voice_id, rate=rate)
+        volume = VOLUMES[self._volume_combo.currentText()]
+        self._tts_worker = TTSWorker(text, voice=voice_id, rate=rate, volume=volume)
         self._tts_worker.status.connect(self._on_tts_status)
         self._tts_worker.finished.connect(self._on_tts_finished)
         self._tts_worker.error.connect(self._on_tts_error)
@@ -278,7 +333,8 @@ class OutputPanel(QWidget):
         self.tts_status.emit(msg)
 
     def _on_tts_finished(self) -> None:
-        self._read_btn.setEnabled(bool(self._raw_content.strip()))
+        active_text = self._raw_source if self._viewing_source else self._raw_content
+        self._read_btn.setEnabled(bool(active_text.strip()))
         self._stop_btn.setEnabled(False)
         self._tts_worker = None
 
@@ -295,8 +351,17 @@ class OutputPanel(QWidget):
             self._tts_worker.stop()
             self._tts_worker.wait()
         self._tts_worker = None
-        self._read_btn.setEnabled(bool(self._raw_content.strip()))
+        active_text = self._raw_source if self._viewing_source else self._raw_content
+        self._read_btn.setEnabled(bool(active_text.strip()))
         self._stop_btn.setEnabled(False)
+
+    def _exit_source_view(self) -> None:
+        if self._viewing_source:
+            self._source_btn.blockSignals(True)
+            self._source_btn.setChecked(False)
+            self._source_btn.blockSignals(False)
+            self._source_btn.setText("Source Text")
+            self._viewing_source = False
 
     def _save_as(self) -> None:
         default_name = f"notes-{date.today()}.md"
@@ -319,6 +384,18 @@ class OutputPanel(QWidget):
         html_body = md.markdown(self._raw_content, extensions=["extra", "nl2br"])
         self._browser.setHtml(
             f"<html><head>{_build_css()}</head><body>{html_body}</body></html>"
+        )
+
+    def _render_source(self) -> None:
+        escaped = (
+            self._raw_source
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        self._browser.setHtml(
+            f"<html><head>{_build_css()}</head>"
+            f"<body><pre>{escaped}</pre></body></html>"
         )
 
     def _load_into_editor(self, content: str) -> None:

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QStyle,
     QTabWidget,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -176,6 +177,14 @@ class InputPanel(QWidget):
         return self.detail_combo.currentText().lower()
 
     @property
+    def model(self) -> str | None:
+        text = self.model_combo.currentText().strip()
+        return text if text else None
+
+    def refresh_models(self) -> None:
+        self._refresh_models()
+
+    @property
     def sections(self) -> dict[str, bool]:
         return {
             "summary":       self._chk_summary.isChecked(),
@@ -269,6 +278,18 @@ class InputPanel(QWidget):
         detail_row.addWidget(self.detail_combo)
         layout.addLayout(detail_row)
 
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("Model:"))
+        self.model_combo = QComboBox()
+        self.model_combo.setToolTip("Ollama model to use for summarization")
+        self._refresh_model_btn = QToolButton()
+        self._refresh_model_btn.setText("↻")
+        self._refresh_model_btn.setToolTip("Refresh model list from Ollama")
+        model_row.addWidget(self.model_combo, 1)
+        model_row.addWidget(self._refresh_model_btn)
+        layout.addLayout(model_row)
+        self._refresh_models()
+
         sections_label = QLabel("Include sections:")
         sections_label.setStyleSheet("font-size: 11px; color: grey;")
         layout.addWidget(sections_label)
@@ -359,6 +380,7 @@ class InputPanel(QWidget):
         self._notes_tree.itemDoubleClicked.connect(self._on_notes_item_double_click)
         self._new_note_btn.clicked.connect(self._on_new_note)
         self._new_folder_btn.clicked.connect(self._on_new_folder)
+        self._refresh_model_btn.clicked.connect(self._refresh_models)
 
     def _on_url_changed(self, text: str) -> None:
         self.add_url_btn.setEnabled(bool(text.strip()))
@@ -452,6 +474,20 @@ class InputPanel(QWidget):
         path = Path(path_str)
         candidate = path if path.is_dir() else path.parent
         return candidate if is_safe(candidate) else None
+
+    def _refresh_models(self) -> None:
+        current = self.model_combo.currentText()
+        self.model_combo.clear()
+        try:
+            import ollama
+            result = ollama.list()
+            for m in result.models:
+                self.model_combo.addItem(m.model)
+            idx = self.model_combo.findText(current)
+            if idx >= 0:
+                self.model_combo.setCurrentIndex(idx)
+        except Exception:
+            self.model_combo.addItem("llama3.1:8b")
 
     def _refresh_queue_label(self) -> None:
         count = len(self._queued_sources)

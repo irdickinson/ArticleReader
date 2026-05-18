@@ -22,11 +22,13 @@ class TTSWorker(QThread):
         text: str,
         voice: str = "en-US-AriaNeural",
         rate: str = "+0%",
+        volume: float = 1.0,
     ) -> None:
         super().__init__()
         self._text = text
         self._voice = voice
         self._rate = rate
+        self._volume = volume
         self._stop_event = threading.Event()
 
     def stop(self) -> None:
@@ -70,6 +72,9 @@ class TTSWorker(QThread):
             if decoded.nchannels > 1:
                 samples = samples.reshape(-1, decoded.nchannels)
 
+            if self._volume != 1.0:
+                samples = np.clip(samples * self._volume, -32768, 32767).astype(np.int16)
+
             sd.play(samples, decoded.sample_rate)
             sd.wait()
         finally:
@@ -81,6 +86,16 @@ async def _synthesize(text: str, voice: str, rate: str, output_path: str) -> Non
     communicate = edge_tts.Communicate(text, voice, rate=rate)
     await communicate.save(output_path)
 
+
+# Display name → volume multiplier (applied to raw PCM samples)
+VOLUMES: dict[str, float] = {
+    "25%":  0.25,
+    "50%":  0.50,
+    "75%":  0.75,
+    "100%": 1.00,
+    "125%": 1.25,
+    "150%": 1.50,
+}
 
 # Display name → edge-tts SSML rate string
 SPEEDS: dict[str, str] = {

@@ -19,14 +19,22 @@ class ProcessingWorker(QThread):
         sources: list[str],
         detail_level: str = "standard",
         sections: dict[str, bool] | None = None,
+        model: str | None = None,
     ) -> None:
         super().__init__()
         self._sources = sources
         self._detail_level = detail_level
         self._sections = sections
+        self._model = model
+        self._raw_source_text: str = ""
+
+    @property
+    def raw_source_text(self) -> str:
+        return self._raw_source_text
 
     def run(self) -> None:
-        sections: list[str] = []
+        note_sections: list[str] = []
+        source_sections: list[str] = []
         total = len(self._sources)
         history = HistoryStore()
 
@@ -35,19 +43,20 @@ class ProcessingWorker(QThread):
             try:
                 self.progress.emit(f"Extracting {i} of {total}: {label}")
                 title, text = extract(source)
+                source_sections.append(f"## Source {i}: {title}\n*{label}*\n\n{text}\n")
                 self.progress.emit(f"Summarizing {i} of {total}: {title}")
-                notes = summarize(text, self._detail_level, self._sections)
-                sections.append(_format_section(i, title, source, notes))
+                notes = summarize(text, self._detail_level, self._sections, self._model)
+                note_sections.append(_format_section(i, title, source, notes))
                 history.add(title, source, _source_type(source))
             except Exception as exc:
-                sections.append(f"## Source {i}: {label}\n\n> Error: {exc}\n")
+                note_sections.append(f"## Source {i}: {label}\n\n> Error: {exc}\n")
 
         today = date.today().strftime("%Y-%m-%d")
-        markdown = f"# Notes — {today}\n\n" + "\n---\n\n".join(sections)
+        markdown = f"# Notes — {today}\n\n" + "\n---\n\n".join(note_sections)
+        self._raw_source_text = "\n---\n\n".join(source_sections)
 
         try:
             notes_path = save_processed_notes(markdown, self._sources)
-            # Back-fill notes_path on the entries we just added
             store = HistoryStore()
             for entry in store.entries()[:total]:
                 entry.notes_path = str(notes_path)
