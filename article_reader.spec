@@ -1,25 +1,42 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_all
 
 block_cipher = None
 
-# Collect data files that packages need at runtime
-datas = []
-datas += collect_data_files("markdown")           # markdown templates/extensions
-datas += collect_data_files("pdfminer")           # pdfminer data
-datas += [("assets/icon.ico", "assets")]          # app icon
+# Collect data files + binaries for packages that need them at runtime
+datas, binaries, hiddenimports = [], [], []
 
-# Hidden imports that PyInstaller's static analysis may miss
-hiddenimports = (
+datas += collect_data_files("markdown")
+datas += collect_data_files("pdfminer")
+datas += [("assets/icon.ico", "assets")]
+
+# sounddevice bundles the PortAudio DLL; collect_all handles the binary
+_d, _b, _h = collect_all("sounddevice")
+datas += _d; binaries += _b; hiddenimports += _h
+
+# miniaudio has a compiled C extension
+_d, _b, _h = collect_all("miniaudio")
+datas += _d; binaries += _b; hiddenimports += _h
+
+# numpy is required by the TTS audio pipeline
+_d, _b, _h = collect_all("numpy")
+datas += _d; binaries += _b; hiddenimports += _h
+
+# edge-tts is pure Python but has nested submodules
+hiddenimports += collect_submodules("edge_tts")
+hiddenimports += collect_submodules("aiohttp")
+
+# Other hidden imports PyInstaller's static analysis may miss
+hiddenimports += (
     collect_submodules("youtube_transcript_api") +
     collect_submodules("pdfminer") +
-    ["PyQt6.QtPrintSupport"]   # required by Qt's print system, linked at runtime
+    ["PyQt6.QtPrintSupport"]
 )
 
 a = Analysis(
     ["src/main.py"],
-    pathex=["src"],            # so PyInstaller resolves `from core/ui import ...`
-    binaries=[],
+    pathex=["src"],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -27,7 +44,7 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         "tkinter", "matplotlib", "scipy",
-        "numpy", "pandas", "scikit_learn", "gravityai",
+        "pandas", "scikit_learn", "gravityai",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -46,8 +63,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,          # UPX can trigger Windows Defender false positives
-    console=False,      # no terminal window when launched
+    upx=False,
+    console=False,
     icon="assets/icon.ico",
 )
 
